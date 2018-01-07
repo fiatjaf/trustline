@@ -1,0 +1,35 @@
+{
+  "name": "trustline",
+  "version": "0.1.0",
+  "description": "See other nodes in the network using WebRTC Star discovery mechanism",
+  "main": "app.js",
+  "scripts": {
+    "watch-scss": "ls *.scss | entr fish -c 'node-sass --output-style compressed --source-map true style.scss > dist/bundle.css; and echo 'done!''",
+    "build-scss": "node-sass --output-style compressed --source-map true style.scss > dist/bundle.css",
+    "watch-elm": "ls *.elm | entr fish -c 'elm make Main.elm --output dist/elm.js'",
+    "build-elm": "elm make --yes Main.elm --output dist/elm.js",
+    "watch-js": "find -name \"*.js\" ! -name \"bundle.js\" ! -path \"*node_modules*\" | entr browserifyinc -vd app.js -o dist/bundle.js",
+    "build-js": "browserify -d app.js -o dist/bundle.js"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "browserify": "^14.5.0",
+    "browserify-incremental": "^3.1.1",
+    "node-sass": "^4.5.3"
+  },
+  "dependencies": {
+    "libp2p": "^0.14.3",
+    "libp2p-multiplex": "^0.5.1",
+    "libp2p-railing": "^0.7.1",
+    "libp2p-secio": "^0.8.1",
+    "libp2p-spdy": "^0.11.0",
+    "libp2p-webrtc-star": "^0.13.3",
+    "libp2p-websocket-star": "^0.7.2",
+    "libp2p-websockets": "^0.10.4",
+    "peer-book": "^0.5.2",
+    "peer-id": "^0.10.4",
+    "peer-info": "^0.11.4",
+    "pull-pushable": "^2.1.1",
+    "pull-stream": "^3.6.1"
+  }
+}
