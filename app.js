@@ -5,11 +5,13 @@ const pull = require('pull-stream')
 const Pushable = require('pull-pushable')
 
 const createNode = require('./create-node')
+const Logchain = require('./logchain.js')
 
 // var knownPeers = JSON.parse(localStorage.getItem('known-peers') || '{}')
 var tried = new PeerBook()
 var book = new PeerBook()
 var queue = new Map()
+var logchains = {}
 
 const app = Elm.Main.fullscreen()
 
@@ -19,11 +21,11 @@ createNode((err, node) => {
   }
 
   node.on('peer:discovery', (peerInfo) => {
-    console.log('discovered a peer', peerInfo.id.toB58String())
+    // console.log('discovered a peer', peerInfo.id.toB58String())
     if (tried.has(peerInfo)) return
     if (book.has(peerInfo)) return
 
-    console.log(' > dialing', peerInfo.id.toB58String())
+    // console.log(' > dialing', peerInfo.id.toB58String())
     node.dial(peerInfo, '/trustline/0.0.1', (err, conn) => {
       if (err) {
         // console.log('  $$$ failed to dial', peerInfo.id.toB58String(), err)
@@ -31,17 +33,17 @@ createNode((err, node) => {
         return
       }
 
-      console.log('  [] connected to', peerInfo.id.toB58String())
-      handleConnection(peerInfo, conn)
+      // console.log('  [] connected to', peerInfo.id.toB58String())
+      handleConnection(node.peerInfo, peerInfo, conn)
     })
   })
 
   node.on('peer:connect', (peerInfo) => {
-    console.log(' > got connection to: ' + peerInfo.id.toB58String())
+    // console.log(' > got connection to: ' + peerInfo.id.toB58String())
   })
 
   node.on('peer:disconnect', (peerInfo) => {
-    console.log(' > lost connection to: ' + peerInfo.id.toB58String())
+    // console.log(' > lost connection to: ' + peerInfo.id.toB58String())
   })
 
   node.start((err) => {
@@ -49,8 +51,8 @@ createNode((err, node) => {
       return console.log('failed to start node, maybe WebRTC is not supported')
     }
 
-    const idStr = node.peerInfo.id.toB58String()
-    console.log('node is listening!', idStr)
+    console.log('node is listening!', node.peerInfo.id.toB58String())
+    app.ports.gotMyself.send(node.peerInfo.id.toB58String())
 
     node.handle('/trustline/0.0.1', (protocol, conn) => {
       console.log('  [] got call on ' + protocol)
@@ -61,22 +63,37 @@ createNode((err, node) => {
           return
         }
 
-        handleConnection(peerInfo, conn)
+        handleConnection(node.peerInfo, peerInfo, conn)
       })
     })
+
+    app.ports.issueIOU.subscribe(issueIOU)
 
     // NOTE: to stop the node
     // node.stop((err) => {})
   })
 })
 
-app.ports.sendMessage.subscribe(([peerId, text]) => {
-  let p = queue.get(peerId)
-  p.push(text)
-})
+function issueIOU ([toId, amount, currency]) {
+  let chain = logchains[toId]
+  chain.issueIOU(amount, currency, (err, block) => {
+    if (err) {
+      console.warn('error issuing IOU', err)
+    } else {
+      app.ports.gotBlock.send([toId, block])
+      let p = queue.get(toId)
+      p.push(`new-block ~ ${JSON.stringify(block)}`)
+    }
+  })
+}
 
-function handleConnection (peerInfo, conn) {
+function handleConnection (me, peerInfo, conn) {
   book.put(peerInfo)
+
+  if (!(peerInfo.id.toB58String() in logchains)) {
+    logchains[peerInfo.id.toB58String()] = new Logchain(me, peerInfo)
+  }
+
   app.ports.gotConnection.send(peerInfo.id.toB58String())
 
   if (!queue.has(peerInfo.id.toB58String())) {
@@ -86,15 +103,77 @@ function handleConnection (peerInfo, conn) {
 
     pull(
       p,
+      // pull.map(x => console.log('[OUTGOING]', x) && x),
       conn
     )
 
     pull(
       conn,
+      // pull.map(x => console.log('[INCOMING]', x) && x),
       pull.map(data => data.toString('utf8').replace('\n', '')),
       pull.drain(text => {
-        app.ports.gotMessage.send([peerInfo.id.toB58String(), text])
+        handleMessage(peerInfo, text)
       })
     )
+  }
+}
+
+function handleMessage (peerInfo, message) {
+  let [kind, payload] = message.split(' ~ ')
+
+  let idStr = peerInfo.id.toB58String()
+  let p = queue.get(idStr)
+  let chain = logchains[idStr]
+
+  switch (kind) {
+    case 'requested-block':
+      chain.addBlock(JSON.parse(payload), (err, block) => {
+        if (err) {
+          return console.warn('requested block was invalid', block, err)
+        }
+        p.push(`get-block-at ${block.n + 1}`)
+      })
+      break
+    case 'query-chain-height':
+      p.push(`response-chain-height ${chain.last.n}`)
+      break
+    case 'response-chain-height':
+      if (parseInt(payload) === chain.last.n) {
+        console.log(`we're up to date (at height ${chain.last.n})`)
+      } else {
+        p.push(`get-block-at ${chain.last.n + 1}`)
+      }
+      break
+    case 'block-not-found-at':
+      p.push(`query-chain-height`)
+      break
+    case 'get-block-at':
+      let block = chain.byN[parseInt(payload)]
+      if (block) {
+        p.push(`requested-block ~ ${JSON.stringify(block)}`)
+      } else {
+        p.push(`block-not-found-at ~ ${payload}`)
+      }
+      break
+    case 'new-block':
+      chain.addBlock(JSON.parse(payload), (err, block) => {
+        if (err) {
+          console.warn('new block was invalid', block, err)
+          p.push(`rejected-new-block ~ ${block.hash}: ${err}`)
+        } else {
+          console.log('received new block', block)
+          app.ports.gotBlock.send([idStr, block])
+          p.push(`added-new-block ~ ${block.hash}`)
+        }
+      })
+      break
+    case 'added-new-block':
+      console.log(`our new block was added: ${payload}`)
+      break
+    case 'rejected-new-block':
+      console.warn(`we've send and invalid block: ${payload}`)
+      break
+    default:
+      return
   }
 }

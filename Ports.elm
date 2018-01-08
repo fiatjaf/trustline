@@ -1,6 +1,9 @@
 port module Ports exposing (..)
 
-port sendMessage : (String, String) -> Cmd msg
+import Trustline exposing (..)
 
+port issueIOU : (String, String, String) -> Cmd msg
+
+port gotMyself : (String -> msg) -> Sub msg
+port gotBlock : ((String, Block) -> msg) -> Sub msg
 port gotConnection : (String -> msg) -> Sub msg
-port gotMessage : ((String, String) -> msg) -> Sub msg

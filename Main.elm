@@ -1,13 +1,15 @@
 import Html exposing
   ( Html, text
   , div
-  , input
+  , input, button
   )
 import Html.Events exposing (onInput, onClick)
+import Html.Attributes exposing (placeholder)
 import Dict exposing (Dict)
 import Maybe.Extra exposing ((?))
 
 import Ports exposing (..)
+import Trustline exposing (..)
 
 main =
   Html.program
@@ -22,12 +24,21 @@ main =
 
 
 type alias Model =
-  { chats : Dict String (List String)
+  { id : String
+  , trustlines : Dict String Trustline
+  , typing_value : String
+  , selected_currency : String
+  , default_currency : String
   }
 
 init : (Model, Cmd Msg)
 init =
-  ( Model Dict.empty
+  ( { id = ""
+    , trustlines = Dict.empty
+    , typing_value = ""
+    , selected_currency = "USD"
+    , default_currency = "USD"
+    }
   , Cmd.none
   )
 
@@ -36,34 +47,36 @@ init =
 
 
 type Msg
-  = GotConnection String
-  | GotMessage (String, String)
-  | SendMessage String String
+  = GotMyself String
+  | GotConnection String
+  | GotBlock (String, Block)
+  | IssueIOU String
+  | ChangeAmount String
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
   case msg of
+    GotMyself id -> ( { model | id = id }, Cmd.none )
     GotConnection to ->
       ( { model
-          | chats = model.chats
-            |> Dict.insert to []
+          | trustlines = model.trustlines
+            |> Dict.insert to (Trustline to [])
         }
       , Cmd.none
       )
-    GotMessage (from, text) ->
+    GotBlock (from, block) ->
       ( { model
-          | chats = model.chats
-            |> Dict.update from (Maybe.map (\m -> text :: m))
+          | trustlines = model.trustlines
+            |> Dict.update from (Maybe.map <| appendBlock block)
         }
       , Cmd.none
       )
-    SendMessage to text ->
-      ( { model
-          | chats = model.chats
-            |> Dict.update to (Maybe.map (\m -> text :: m))
-        }
-      , sendMessage (to, text)
+    IssueIOU to ->
+      ( { model | typing_value = "", selected_currency = model.default_currency }
+      , issueIOU (to, model.typing_value, model.selected_currency)
       )
+    ChangeAmount amt ->
+      ( { model | typing_value = amt }, Cmd.none )
 
 
 -- SUBSCRIPTIONS
@@ -72,8 +85,9 @@ update msg model =
 subscriptions : Model -> Sub Msg
 subscriptions model =
   Sub.batch
-    [ gotMessage GotMessage
+    [ gotBlock GotBlock
     , gotConnection GotConnection
+    , gotMyself GotMyself
     ]
 
 
@@ -83,20 +97,22 @@ subscriptions model =
 view : Model -> Html Msg
 view model =
   div []
-    [ text "xi"
+    [ text model.id
     , div []
       <| List.map viewChat
-      <| Dict.toList model.chats
+      <| Dict.toList model.trustlines
     ]
 
-viewChat : (String, List String) -> Html Msg
-viewChat (id, messages) =
+viewChat : (String, Trustline) -> Html Msg
+viewChat (id, {chain}) =
   div []
     [ text id
     , div []
-      [ input [ onInput (SendMessage id) ] []
+      [ text "issue IOU"
+      , input [ onInput ChangeAmount, placeholder "amount" ] []
+      , button [ onClick (IssueIOU id) ] [ text "issue" ]
       ]
     , div []
-      <| List.map (div [] << List.singleton << text)
-      <| messages
+      <| List.map (div [] << List.singleton << text << toString)
+      <| chain
     ]
