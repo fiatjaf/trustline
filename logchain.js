@@ -1,10 +1,16 @@
+/* globals fetch */
+
 const sha256 = require('fast-sha256')
 const bs58 = require('bs58')
+const parallel = require('run-parallel')
+const waterfall = require('run-waterfall')
 
 module.exports = class Blockchain {
-  constructor (me, other) {
-    this.me = me
-    this.other = other
+  constructor (peerBook, me, other) {
+    this._me = me
+    this._other = other
+
+    this.book = peerBook
 
     this.last = {
       n: 0,
@@ -14,6 +20,14 @@ module.exports = class Blockchain {
     }
     this.byHash = {}
     this.byN = [this.last]
+  }
+
+  get me () {
+    return this.book.get(this._me)
+  }
+
+  get other () {
+    return this.book.get(this._other)
   }
 
   addBlock (block, callback) {
@@ -54,11 +68,15 @@ module.exports = class Blockchain {
       return callback('block author does not belong to this trustline')
     }
 
-    author_key.verify(bs58.decode(hash), bs58.decode(signature), (err, result) => {
-      if (err) return callback(err)
-      if (result !== true) return callback('failed to verify')
-      callback(null)
-    })
+    parallel([
+      cb =>
+        author_key.verify(bs58.decode(hash), bs58.decode(signature), (err, result) => {
+          if (err) return callback(err)
+          if (result !== true) return callback('failed to verify')
+          callback(null)
+        }),
+      cb => validatebtc(block.btc, cb)
+    ], callback)
   }
 
   issueIOU (amount, currency, callback) {
@@ -74,21 +92,31 @@ module.exports = class Blockchain {
       signature: undefined
     }
 
-    let hash_b = blockhash(block, this.last.signature)
+    waterfall([
+      latestbtc,
+      ({time, hash}, cb) => {
+        block.btc = {time, hash}
+        let hash_b = blockhash(block, this.last.signature)
 
-    this.me.id.privKey.sign(hash_b, (err, sig) => {
+        this.me.id.privKey.sign(hash_b, (err, sig) => {
+          if (err) return callback(err)
+
+          block.hash = bs58.encode(hash_b)
+          block.signature = bs58.encode(sig)
+
+          cb(null, block)
+        })
+      }
+    ], (err, block) => {
       if (err) return callback(err)
-
-      block.hash = bs58.encode(hash_b)
-      block.signature = bs58.encode(sig)
 
       this.addBlock(block, callback)
     })
   }
 }
 
-function blockhash ({n, op, prev, author}, prevSignature) {
-  return sha256([n, op, prev, author, prevSignature].join('|'))
+function blockhash ({n, btc, op, prev, author}, prevSignature) {
+  return sha256([n, op, prev, btc.hash, author, prevSignature].join('|'))
 }
 
 function parseOp (op) {
@@ -96,4 +124,21 @@ function parseOp (op) {
   if (iou) {
     return {type: 'iou', value: parseFloat(iou[1]), currency: iou[3]}
   }
+}
+
+function latestbtc (callback) {
+  return fetch('https://blockchain.info/latestblock?cors=true')
+    .then(r => r.json())
+    .then(block => callback(null, block))
+    .catch(callback)
+}
+
+function validatebtc ({hash, time}, callback) {
+  return fetch(`https://blockchain.info/rawblock/${hash}?cors=true`)
+    .then(r => r.json())
+    .then(block => {
+      if (block.hash === hash && block.time === time) return callback(null, true)
+      callback(new Error('hash and time do not match bitcoin block'))
+    })
+    .catch(callback)
 }

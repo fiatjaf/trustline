@@ -5,7 +5,7 @@ const pull = require('pull-stream')
 const Pushable = require('pull-pushable')
 
 const createNode = require('./create-node')
-const Logchain = require('./logchain.js')
+const Blockchain = require('./logchain.js')
 
 // var knownPeers = JSON.parse(localStorage.getItem('known-peers') || '{}')
 var tried = new PeerBook()
@@ -25,7 +25,6 @@ createNode((err, node) => {
     if (tried.has(peerInfo)) return
     if (book.has(peerInfo)) return
 
-    // console.log(' > dialing', peerInfo.id.toB58String())
     node.dial(peerInfo, '/trustline/0.0.1', (err, conn) => {
       if (err) {
         // console.log('  $$$ failed to dial', peerInfo.id.toB58String(), err)
@@ -33,7 +32,6 @@ createNode((err, node) => {
         return
       }
 
-      // console.log('  [] connected to', peerInfo.id.toB58String())
       handleConnection(node.peerInfo, peerInfo, conn)
     })
   })
@@ -51,12 +49,12 @@ createNode((err, node) => {
       return console.log('failed to start node, maybe WebRTC is not supported')
     }
 
+    book.put(node.peerInfo)
+
     console.log('node is listening!', node.peerInfo.id.toB58String())
     app.ports.gotMyself.send(node.peerInfo.id.toB58String())
 
     node.handle('/trustline/0.0.1', (protocol, conn) => {
-      console.log('  [] got call on ' + protocol)
-
       conn.getPeerInfo((err, peerInfo) => {
         if (err) {
           console.log(err)
@@ -90,32 +88,33 @@ function issueIOU ([toId, amount, currency]) {
 function handleConnection (me, peerInfo, conn) {
   book.put(peerInfo)
 
-  if (!(peerInfo.id.toB58String() in logchains)) {
-    logchains[peerInfo.id.toB58String()] = new Logchain(me, peerInfo)
+  let idStr = peerInfo.id.toB58String()
+  if (!(idStr in logchains)) {
+    logchains[idStr] = new Blockchain(book, me, peerInfo)
   }
 
-  app.ports.gotConnection.send(peerInfo.id.toB58String())
+  app.ports.gotConnection.send(idStr)
 
-  if (!queue.has(peerInfo.id.toB58String())) {
-    let p = Pushable()
+  let p = Pushable()
 
-    queue.set(peerInfo.id.toB58String(), p)
+  queue.set(idStr, p)
 
-    pull(
-      p,
-      // pull.map(x => console.log('[OUTGOING]', x) && x),
-      conn
-    )
+  pull(
+    p,
+    conn
+  )
 
-    pull(
-      conn,
-      // pull.map(x => console.log('[INCOMING]', x) && x),
-      pull.map(data => data.toString('utf8').replace('\n', '')),
-      pull.drain(text => {
-        handleMessage(peerInfo, text)
-      })
-    )
-  }
+  pull(
+    conn,
+    pull.map(data => data.toString('utf8').replace('\n', '')),
+    pull.drain(text => {
+      handleMessage(peerInfo, text)
+    })
+  )
+
+  // start by requesting old blocks
+  let chain = logchains[idStr]
+  p.push(`get-block-at ~ ${chain.last.n + 1}`)
 }
 
 function handleMessage (peerInfo, message) {

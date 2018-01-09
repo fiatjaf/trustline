@@ -19,10 +19,10 @@
   },
   "dependencies": {
     "fast-sha256": "^1.1.0",
-    "libp2p": "^0.14.3",
+    "libp2p": "^0.15.0",
     "libp2p-multiplex": "^0.5.1",
     "libp2p-railing": "^0.7.1",
-    "libp2p-secio": "^0.8.1",
+    "libp2p-secio": "^0.9.0",
     "libp2p-spdy": "^0.11.0",
     "libp2p-webrtc-star": "^0.13.3",
     "libp2p-websocket-star": "^0.7.2",
@@ -30,8 +30,9 @@
     "peer-book": "^0.5.2",
     "peer-id": "^0.10.4",
     "peer-info": "^0.11.4",
-    "pull-merge": "^1.0.3",
     "pull-pushable": "^2.1.1",
-    "pull-stream": "^3.6.1"
+    "pull-stream": "^3.6.1",
+    "run-parallel": "^1.1.6",
+    "run-waterfall": "^1.1.3"
   }
 }
